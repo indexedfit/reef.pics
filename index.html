@@ -396,10 +396,31 @@
       outline-offset: 2px;
     }
 
-    .grid-item img {
+    .grid-item img,
+    .grid-item video {
       width: 100%;
       height: 100%;
       object-fit: cover;
+    }
+
+    .grid-item .video-indicator {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0,0,0,0.6);
+      border-radius: 4px;
+      padding: 4px 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      color: #fff;
+    }
+
+    .grid-item .video-indicator svg {
+      width: 12px;
+      height: 12px;
     }
 
     .grid-item .overlay {
@@ -448,7 +469,8 @@
       position: relative;
     }
 
-    .lightbox-content img {
+    .lightbox-content img,
+    .lightbox-content video {
       max-width: 100%;
       max-height: 90vh;
       object-fit: contain;
@@ -810,7 +832,11 @@
         </button>
       </nav>
       <div class="sidebar-footer">
-        Stored locally in your browser
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Stored locally</span>
+          <button id="clearStorageBtn" style="background: none; border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font-family: inherit; font-size: 9px; color: var(--text-muted); cursor: pointer;">Clear</button>
+        </div>
+        <div id="storageInfo" style="margin-top: 6px; font-size: 9px; opacity: 0.7;"></div>
       </div>
     </aside>
 
@@ -855,8 +881,8 @@
               <polyline points="17 8 12 3 7 8"/>
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
-            Add Pictures
-            <input type="file" id="fileInput" multiple accept="image/*" hidden>
+            Add Media
+            <input type="file" id="fileInput" multiple accept="image/*,video/*" hidden>
           </label>
         </div>
       </header>
@@ -868,7 +894,7 @@
             <polyline points="17 8 12 3 7 8"/>
             <line x1="12" y1="3" x2="12" y2="15"/>
           </svg>
-          <p>Drop images here</p>
+          <p>Drop files here</p>
         </div>
 
         <div id="emptyState" class="empty-state">
@@ -877,10 +903,10 @@
             <circle cx="8.5" cy="8.5" r="1.5"/>
             <polyline points="21 15 16 10 5 21"/>
           </svg>
-          <h3>No pictures yet</h3>
+          <h3>No media yet</h3>
           <p>
-            Drag & drop images here, paste with 
-            <span class="shortcut">⌘V</span>, or click Add Pictures
+            Drag & drop images or videos here, paste with
+            <span class="shortcut">⌘V</span>, or click Add Media
           </p>
         </div>
 
@@ -904,6 +930,7 @@
     </button>
     <div class="lightbox-content">
       <img id="lightboxImg" src="" alt="">
+      <video id="lightboxVideo" controls style="display: none;"></video>
     </div>
     <button class="lightbox-nav next" id="lightboxNext">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1002,61 +1029,188 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
-    // Database
+    // Storage abstraction - OPFS with IndexedDB fallback
     const DB_NAME = 'researchpics';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2;
     let db;
+    let useOPFS = false;
+    let opfsRoot = null;
 
-    async function initDB() {
+    // Check OPFS support and initialize
+    async function initStorage() {
+      // Try OPFS first
+      try {
+        if ('storage' in navigator && 'getDirectory' in navigator.storage) {
+          opfsRoot = await navigator.storage.getDirectory();
+          useOPFS = true;
+          console.log('Using OPFS for file storage');
+        }
+      } catch (e) {
+        console.log('OPFS not available, using IndexedDB fallback');
+      }
+
+      // Initialize IndexedDB for metadata (and blob fallback)
       return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
+
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           db = request.result;
           resolve(db);
         };
-        
+
         request.onupgradeneeded = (e) => {
           const database = e.target.result;
-          
+
           if (!database.objectStoreNames.contains('pictures')) {
             const pictureStore = database.createObjectStore('pictures', { keyPath: 'id' });
             pictureStore.createIndex('createdAt', 'createdAt', { unique: false });
           }
-          
+
           if (!database.objectStoreNames.contains('albums')) {
             database.createObjectStore('albums', { keyPath: 'id' });
+          }
+
+          // For IndexedDB fallback - store blobs separately
+          if (!database.objectStoreNames.contains('blobs')) {
+            database.createObjectStore('blobs', { keyPath: 'id' });
           }
         };
       });
     }
 
+    // OPFS file operations
+    async function saveFileToOPFS(id, blob) {
+      const fileHandle = await opfsRoot.getFileHandle(id, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    }
+
+    async function getFileFromOPFS(id) {
+      try {
+        const fileHandle = await opfsRoot.getFileHandle(id);
+        return await fileHandle.getFile();
+      } catch {
+        return null;
+      }
+    }
+
+    async function deleteFileFromOPFS(id) {
+      try {
+        await opfsRoot.removeEntry(id);
+      } catch {
+        // File might not exist
+      }
+    }
+
+    // IndexedDB blob operations (fallback)
+    async function saveBlobToIDB(id, blob) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('blobs', 'readwrite');
+        const store = tx.objectStore('blobs');
+        store.put({ id, blob });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function getBlobFromIDB(id) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('blobs', 'readonly');
+        const store = tx.objectStore('blobs');
+        const request = store.get(id);
+        request.onsuccess = () => resolve(request.result?.blob || null);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    async function deleteBlobFromIDB(id) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('blobs', 'readwrite');
+        const store = tx.objectStore('blobs');
+        store.delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    // Unified file operations
+    async function saveFile(id, blob) {
+      if (useOPFS) {
+        await saveFileToOPFS(id, blob);
+      } else {
+        await saveBlobToIDB(id, blob);
+      }
+    }
+
+    async function getFile(id) {
+      if (useOPFS) {
+        return await getFileFromOPFS(id);
+      } else {
+        return await getBlobFromIDB(id);
+      }
+    }
+
+    async function deleteFile(id) {
+      if (useOPFS) {
+        await deleteFileFromOPFS(id);
+      } else {
+        await deleteBlobFromIDB(id);
+      }
+    }
+
+    // Object URL management to prevent memory leaks
+    const objectURLs = new Map();
+
+    function createObjectURL(id, blob) {
+      if (objectURLs.has(id)) {
+        return objectURLs.get(id);
+      }
+      const url = URL.createObjectURL(blob);
+      objectURLs.set(id, url);
+      return url;
+    }
+
+    function revokeObjectURL(id) {
+      if (objectURLs.has(id)) {
+        URL.revokeObjectURL(objectURLs.get(id));
+        objectURLs.delete(id);
+      }
+    }
+
+    function revokeAllObjectURLs() {
+      for (const url of objectURLs.values()) {
+        URL.revokeObjectURL(url);
+      }
+      objectURLs.clear();
+    }
+
     // Picture operations
     async function savePicture(file) {
+      const id = `pic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const isVideo = file.type.startsWith('video/');
+
+      // Save the file blob
+      await saveFile(id, file);
+
+      // Save metadata to IndexedDB
+      const picture = {
+        id,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        isVideo,
+        createdAt: Date.now(),
+        albums: []
+      };
+
       return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          const id = `pic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          const picture = {
-            id,
-            name: file.name,
-            type: file.type,
-            size: file.size,
-            data: reader.result,
-            createdAt: Date.now(),
-            albums: []
-          };
-          
-          const tx = db.transaction('pictures', 'readwrite');
-          const store = tx.objectStore('pictures');
-          store.put(picture);
-          
-          tx.oncomplete = () => resolve(picture);
-          tx.onerror = () => reject(tx.error);
-        };
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
+        const tx = db.transaction('pictures', 'readwrite');
+        const store = tx.objectStore('pictures');
+        store.put(picture);
+        tx.oncomplete = () => resolve(picture);
+        tx.onerror = () => reject(tx.error);
       });
     }
 
@@ -1065,7 +1219,7 @@
         const tx = db.transaction('pictures', 'readonly');
         const store = tx.objectStore('pictures');
         const request = store.getAll();
-        
+
         request.onsuccess = () => {
           const pics = request.result.sort((a, b) => b.createdAt - a.createdAt);
           resolve(pics);
@@ -1079,10 +1233,17 @@
         const tx = db.transaction('pictures', 'readonly');
         const store = tx.objectStore('pictures');
         const request = store.get(id);
-        
+
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
+    }
+
+    async function getPictureWithBlob(id) {
+      const pic = await getPicture(id);
+      if (!pic) return null;
+      const blob = await getFile(id);
+      return { ...pic, blob };
     }
 
     async function updatePicture(picture) {
@@ -1090,18 +1251,23 @@
         const tx = db.transaction('pictures', 'readwrite');
         const store = tx.objectStore('pictures');
         store.put(picture);
-        
+
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
     }
 
     async function deletePicture(id) {
+      // Delete file
+      await deleteFile(id);
+      revokeObjectURL(id);
+
+      // Delete metadata
       return new Promise((resolve, reject) => {
         const tx = db.transaction('pictures', 'readwrite');
         const store = tx.objectStore('pictures');
         store.delete(id);
-        
+
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
@@ -1112,11 +1278,11 @@
       return new Promise((resolve, reject) => {
         const id = `album_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const album = { id, name, createdAt: Date.now() };
-        
+
         const tx = db.transaction('albums', 'readwrite');
         const store = tx.objectStore('albums');
         store.put(album);
-        
+
         tx.oncomplete = () => resolve(album);
         tx.onerror = () => reject(tx.error);
       });
@@ -1127,7 +1293,7 @@
         const tx = db.transaction('albums', 'readonly');
         const store = tx.objectStore('albums');
         const request = store.getAll();
-        
+
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
@@ -1138,7 +1304,7 @@
         const tx = db.transaction('albums', 'readwrite');
         const store = tx.objectStore('albums');
         store.put(album);
-        
+
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
@@ -1153,12 +1319,12 @@
           await updatePicture(pic);
         }
       }
-      
+
       return new Promise((resolve, reject) => {
         const tx = db.transaction('albums', 'readwrite');
         const store = tx.objectStore('albums');
         store.delete(id);
-        
+
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
@@ -1167,6 +1333,39 @@
     async function getAlbumPictures(albumId) {
       const pictures = await getAllPictures();
       return pictures.filter(p => p.albums.includes(albumId));
+    }
+
+    // Clear all storage
+    async function clearAllStorage() {
+      // Clear OPFS
+      if (useOPFS && opfsRoot) {
+        for await (const [name] of opfsRoot) {
+          await opfsRoot.removeEntry(name);
+        }
+      }
+
+      // Clear IndexedDB
+      const tx = db.transaction(['pictures', 'albums', 'blobs'], 'readwrite');
+      tx.objectStore('pictures').clear();
+      tx.objectStore('albums').clear();
+      tx.objectStore('blobs').clear();
+
+      // Clear object URLs
+      revokeAllObjectURLs();
+
+      return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    // Get storage usage info
+    async function getStorageInfo() {
+      const pics = await getAllPictures();
+      const totalSize = pics.reduce((sum, p) => sum + p.size, 0);
+      const videoCount = pics.filter(p => p.isVideo).length;
+      const imageCount = pics.length - videoCount;
+      return { totalSize, imageCount, videoCount, totalCount: pics.length };
     }
 
     // UI State
@@ -1217,25 +1416,23 @@
     // Download multiple pictures as zip
     async function downloadSelectedAsZip() {
       if (selectedPictures.size === 0) return;
-      
+
       showToast('Preparing download...');
-      
+
       const zip = new JSZip();
       const folder = zip.folder('researchpics');
-      
+
       let index = 0;
       for (const picId of selectedPictures) {
-        const pic = await getPicture(picId);
-        if (pic) {
-          // Extract base64 data
-          const base64Data = pic.data.split(',')[1];
+        const pic = await getPictureWithBlob(picId);
+        if (pic && pic.blob) {
           const ext = pic.type.split('/')[1] || 'png';
-          const filename = pic.name || `image_${index + 1}.${ext}`;
-          folder.file(filename, base64Data, { base64: true });
+          const filename = pic.name || `media_${index + 1}.${ext}`;
+          folder.file(filename, pic.blob);
           index++;
         }
       }
-      
+
       const blob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1245,8 +1442,8 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      
-      showToast(`Downloaded ${index} pictures`);
+
+      showToast(`Downloaded ${index} file${index !== 1 ? 's' : ''}`);
     }
 
     // Toast
@@ -1272,40 +1469,101 @@
       });
     }
 
-    // Render grid
+    // Render grid - uses DOM methods to avoid string length issues with many large files
     async function renderGrid() {
       let displayPictures;
-      
+
       if (currentView === 'all') {
         displayPictures = await getAllPictures();
       } else {
         displayPictures = await getAlbumPictures(currentAlbumId);
       }
-      
+
       pictures = displayPictures;
-      
+
       if (pictures.length === 0) {
         grid.innerHTML = '';
         emptyState.style.display = 'flex';
+        updateStorageInfo();
         return;
       }
-      
+
       emptyState.style.display = 'none';
-      
-      grid.innerHTML = pictures.map((pic, index) => `
-        <div class="grid-item ${selectedPictures.has(pic.id) ? 'selected' : ''}" 
-             data-id="${pic.id}" 
-             data-index="${index}">
-          <img src="${pic.data}" alt="${pic.name}" loading="lazy">
-          <div class="overlay">
-            <div class="meta">${formatBytes(pic.size)}</div>
-          </div>
-        </div>
-      `).join('');
-      
+
+      // Clear grid and build DOM elements individually
+      grid.innerHTML = '';
+      const fragment = document.createDocumentFragment();
+
+      for (let index = 0; index < pictures.length; index++) {
+        const pic = pictures[index];
+        const item = document.createElement('div');
+        item.className = 'grid-item' + (selectedPictures.has(pic.id) ? ' selected' : '');
+        item.dataset.id = pic.id;
+        item.dataset.index = index;
+
+        // Create media element (image or video)
+        if (pic.isVideo) {
+          const video = document.createElement('video');
+          video.muted = true;
+          video.preload = 'metadata';
+          // Load blob and create object URL
+          loadMediaElement(video, pic.id);
+
+          // Video indicator
+          const indicator = document.createElement('div');
+          indicator.className = 'video-indicator';
+          indicator.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+          item.appendChild(video);
+          item.appendChild(indicator);
+        } else {
+          const img = document.createElement('img');
+          img.alt = pic.name || '';
+          img.loading = 'lazy';
+          // Load blob and create object URL
+          loadMediaElement(img, pic.id);
+          item.appendChild(img);
+        }
+
+        // Overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = formatBytes(pic.size);
+        overlay.appendChild(meta);
+        item.appendChild(overlay);
+
+        fragment.appendChild(item);
+      }
+
+      grid.appendChild(fragment);
+
       // Update count
       const allPics = await getAllPictures();
       allCount.textContent = allPics.length;
+      updateStorageInfo();
+    }
+
+    // Load media element with object URL from blob storage
+    async function loadMediaElement(element, id) {
+      const blob = await getFile(id);
+      if (blob) {
+        const url = createObjectURL(id, blob);
+        element.src = url;
+      }
+    }
+
+    // Update storage info display
+    async function updateStorageInfo() {
+      const info = await getStorageInfo();
+      const storageEl = document.getElementById('storageInfo');
+      if (storageEl) {
+        let text = formatBytes(info.totalSize);
+        if (info.videoCount > 0) {
+          text += ` (${info.imageCount} img, ${info.videoCount} vid)`;
+        }
+        storageEl.textContent = text;
+      }
     }
 
     // Render albums
@@ -1370,29 +1628,35 @@
 
     // Handle file upload
     async function handleFiles(files) {
-      const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
-      
-      if (imageFiles.length === 0) {
-        showToast('No valid images found');
+      const mediaFiles = Array.from(files).filter(f =>
+        f.type.startsWith('image/') || f.type.startsWith('video/')
+      );
+
+      if (mediaFiles.length === 0) {
+        showToast('No valid media files found');
         return;
       }
-      
-      for (const file of imageFiles) {
+
+      showToast(`Adding ${mediaFiles.length} file${mediaFiles.length > 1 ? 's' : ''}...`);
+
+      for (const file of mediaFiles) {
         const pic = await savePicture(file);
-        
+
         // If in album view, add to current album
         if (currentView === 'album' && currentAlbumId) {
           pic.albums.push(currentAlbumId);
           await updatePicture(pic);
         }
       }
-      
-      showToast(`Added ${imageFiles.length} picture${imageFiles.length > 1 ? 's' : ''}`);
+
+      showToast(`Added ${mediaFiles.length} file${mediaFiles.length > 1 ? 's' : ''}`);
       renderGrid();
       renderAlbums();
     }
 
     // Lightbox
+    const lightboxVideo = document.getElementById('lightboxVideo');
+
     function openLightbox(index) {
       lightboxIndex = index;
       updateLightbox();
@@ -1403,36 +1667,61 @@
     function closeLightbox() {
       lightbox.classList.remove('active');
       document.body.style.overflow = '';
+      // Pause video if playing
+      lightboxVideo.pause();
+      lightboxVideo.src = '';
     }
 
-    function updateLightbox() {
+    async function updateLightbox() {
       const pic = pictures[lightboxIndex];
       if (!pic) return;
-      
-      lightboxImg.src = pic.data;
+
+      // Get blob and create/reuse object URL
+      const blob = await getFile(pic.id);
+      const url = blob ? createObjectURL(pic.id, blob) : '';
+
+      // Show appropriate media element
+      if (pic.isVideo) {
+        lightboxImg.style.display = 'none';
+        lightboxVideo.style.display = 'block';
+        lightboxVideo.src = url;
+      } else {
+        lightboxVideo.style.display = 'none';
+        lightboxVideo.pause();
+        lightboxImg.style.display = 'block';
+        lightboxImg.src = url;
+      }
+
       lightboxCounter.textContent = `${lightboxIndex + 1} / ${pictures.length}`;
       lightboxSize.textContent = formatBytes(pic.size);
       lightboxDate.textContent = formatDate(pic.createdAt);
     }
 
     function lightboxPrev() {
+      lightboxVideo.pause();
       lightboxIndex = (lightboxIndex - 1 + pictures.length) % pictures.length;
       updateLightbox();
     }
 
     function lightboxNext() {
+      lightboxVideo.pause();
       lightboxIndex = (lightboxIndex + 1) % pictures.length;
       updateLightbox();
     }
 
     // Download picture
-    function downloadPicture(pic) {
+    async function downloadPicture(pic) {
+      const blob = await getFile(pic.id);
+      if (!blob) return;
+
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = pic.data;
-      a.download = pic.name || 'image.png';
+      a.href = url;
+      a.download = pic.name || (pic.isVideo ? 'video.mp4' : 'image.png');
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
 
     // Mobile sidebar
@@ -1508,15 +1797,15 @@
     document.addEventListener('paste', async (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
-      
+
       const files = [];
       for (const item of items) {
-        if (item.type.startsWith('image/')) {
+        if (item.type.startsWith('image/') || item.type.startsWith('video/')) {
           const file = item.getAsFile();
           if (file) files.push(file);
         }
       }
-      
+
       if (files.length > 0) {
         handleFiles(files);
       }
@@ -1783,15 +2072,35 @@
       if (e.target === addToAlbumModal) addToAlbumModal.classList.remove('active');
     });
 
+    // Clear storage button
+    document.getElementById('clearStorageBtn').addEventListener('click', async () => {
+      const info = await getStorageInfo();
+      if (info.totalCount === 0) {
+        showToast('Storage is already empty');
+        return;
+      }
+
+      if (confirm(`Delete all ${info.totalCount} files (${formatBytes(info.totalSize)})? This cannot be undone.`)) {
+        await clearAllStorage();
+        showToast('Storage cleared');
+        switchView('all');
+        renderGrid();
+        renderAlbums();
+      }
+    });
+
     // Service Worker
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 
     // Init
-    initDB().then(() => {
+    initStorage().then(() => {
       renderGrid();
       renderAlbums();
+    }).catch(err => {
+      console.error('Failed to initialize storage:', err);
+      showToast('Failed to initialize storage');
     });
   </script>
 </body>

@@ -1050,7 +1050,7 @@
       }
 
       // Initialize IndexedDB for metadata (and blob fallback)
-      return new Promise((resolve, reject) => {
+      await new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
         request.onerror = () => reject(request.error);
@@ -1077,6 +1077,43 @@
           }
         };
       });
+
+      // Migrate old data format (base64 data URLs) to new format (blobs)
+      await migrateOldData();
+    }
+
+    // Migrate old pictures that have inline data URLs to new blob storage
+    async function migrateOldData() {
+      const pics = await getAllPictures();
+      let migrated = 0;
+
+      for (const pic of pics) {
+        // Old format had 'data' property with base64 data URL
+        if (pic.data && typeof pic.data === 'string' && pic.data.startsWith('data:')) {
+          try {
+            // Convert data URL to blob
+            const response = await fetch(pic.data);
+            const blob = await response.blob();
+
+            // Save blob to new storage
+            await saveFile(pic.id, blob);
+
+            // Update picture metadata (remove old data property)
+            const updatedPic = { ...pic };
+            delete updatedPic.data;
+            updatedPic.isVideo = pic.type?.startsWith('video/') || false;
+            await updatePicture(updatedPic);
+
+            migrated++;
+          } catch (e) {
+            console.warn('Failed to migrate picture:', pic.id, e);
+          }
+        }
+      }
+
+      if (migrated > 0) {
+        console.log(`Migrated ${migrated} pictures to new storage format`);
+      }
     }
 
     // OPFS file operations
@@ -2089,8 +2126,15 @@
       }
     });
 
-    // Service Worker
+    // Service Worker - auto-updates and reloads when new version available
     if ('serviceWorker' in navigator) {
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
+      });
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 

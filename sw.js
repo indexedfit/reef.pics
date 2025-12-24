@@ -1,7 +1,5 @@
-const CACHE_NAME = 'researchpics-v1';
+const CACHE_NAME = 'researchpics-v2';
 const ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json'
 ];
 
@@ -11,7 +9,7 @@ self.addEventListener('install', (e) => {
       return cache.addAll(ASSETS);
     })
   );
-  self.skipWaiting();
+  self.skipWaiting(); // Auto-activate new SW immediately
 });
 
 self.addEventListener('activate', (e) => {
@@ -25,7 +23,35 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
+// Listen for skip waiting message from the page
+self.addEventListener('message', (e) => {
+  if (e.data === 'skipWaiting') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+
+  // Network-first for HTML pages (always get fresh content)
+  if (e.request.mode === 'navigate' || url.pathname.endsWith('.html') || url.pathname === '/') {
+    e.respondWith(
+      fetch(e.request)
+        .then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(e.request, responseClone);
+            });
+          }
+          return response;
+        })
+        .catch(() => caches.match(e.request).then((r) => r || caches.match('/index.html')))
+    );
+    return;
+  }
+
+  // Cache-first for other assets
   e.respondWith(
     caches.match(e.request).then((response) => {
       return response || fetch(e.request).then((fetchResponse) => {

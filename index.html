@@ -314,6 +314,7 @@
     .drop-zone.active {
       opacity: 1;
       border-color: var(--text);
+      pointer-events: auto;
     }
 
     .drop-zone svg {
@@ -1812,9 +1813,143 @@
       e.target.value = '';
     });
 
-    // Drag and drop
+    // Drag and drop handler
+    async function handleDrop(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.remove('active');
+
+      const files = [];
+      const dt = e.dataTransfer;
+
+      console.log('=== DROP DEBUG ===');
+      console.log('types:', dt?.types);
+      console.log('files:', dt?.files?.length);
+      console.log('items:', dt?.items?.length);
+
+      // Method 1: Direct files
+      if (dt?.files?.length > 0) {
+        console.log('Found direct files');
+        files.push(...Array.from(dt.files));
+      }
+
+      // Method 2: Items with kind=file
+      if (files.length === 0 && dt?.items) {
+        for (const item of dt.items) {
+          console.log('Item:', item.kind, item.type);
+          if (item.kind === 'file') {
+            const file = item.getAsFile();
+            if (file) {
+              console.log('Got file from item:', file.name, file.type);
+              files.push(file);
+            }
+          }
+        }
+      }
+
+      // Method 3: Check for text/html with embedded image
+      if (files.length === 0 && dt?.types?.includes('text/html')) {
+        const html = dt.getData('text/html');
+        console.log('HTML content:', html?.substring(0, 200));
+
+        // Extract img src from HTML
+        const imgMatch = html?.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch?.[1]) {
+          const imgUrl = imgMatch[1];
+          console.log('Found img src:', imgUrl);
+
+          // Handle data URLs directly
+          if (imgUrl.startsWith('data:')) {
+            try {
+              const response = await fetch(imgUrl);
+              const blob = await response.blob();
+              const file = new File([blob], `image_${Date.now()}.png`, { type: blob.type });
+              files.push(file);
+              console.log('Created file from data URL');
+            } catch (err) {
+              console.log('Failed to parse data URL:', err);
+            }
+          } else if (imgUrl.startsWith('http')) {
+            // Try to fetch the image
+            try {
+              showToast('Fetching image...');
+              const response = await fetch(imgUrl);
+              if (response.ok) {
+                const blob = await response.blob();
+                if (blob.type.startsWith('image/') || blob.type.startsWith('video/')) {
+                  const ext = blob.type.split('/')[1]?.split(';')[0] || 'png';
+                  const file = new File([blob], `image_${Date.now()}.${ext}`, { type: blob.type });
+                  files.push(file);
+                  console.log('Fetched image from HTML src');
+                }
+              }
+            } catch (err) {
+              console.log('CORS blocked img src:', imgUrl);
+            }
+          }
+        }
+      }
+
+      // Method 4: URI list (last resort)
+      if (files.length === 0) {
+        const urls = [];
+
+        if (dt?.types?.includes('text/uri-list')) {
+          const uriList = dt.getData('text/uri-list');
+          urls.push(...(uriList?.split('\n').filter(u => u && !u.startsWith('#')) || []));
+        }
+
+        if (dt?.types?.includes('text/x-moz-url')) {
+          const mozUrl = dt.getData('text/x-moz-url');
+          if (mozUrl) urls.push(mozUrl.split('\n')[0]);
+        }
+
+        console.log('URLs to try:', urls);
+
+        for (const url of urls) {
+          if (url?.startsWith('http')) {
+            try {
+              showToast('Fetching image...');
+              const response = await fetch(url);
+              if (response.ok) {
+                const blob = await response.blob();
+                if (blob.type.startsWith('image/') || blob.type.startsWith('video/')) {
+                  const ext = blob.type.split('/')[1]?.split(';')[0] || 'png';
+                  const file = new File([blob], `image_${Date.now()}.${ext}`, { type: blob.type });
+                  files.push(file);
+                }
+              }
+            } catch (err) {
+              console.log('CORS blocked:', url);
+              showToast('CORS blocked - use Copy Image + Paste instead');
+              return;
+            }
+          }
+        }
+      }
+
+      console.log('Total files:', files.length);
+
+      if (files.length > 0) {
+        handleFiles(files);
+      } else {
+        showToast('No image data found - try Copy Image + Paste');
+      }
+    }
+
+    // Drag and drop events
+    document.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.add('active');
+    });
+
     document.addEventListener('dragover', (e) => {
       e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
       dropZone.classList.add('active');
     });
 
@@ -1824,22 +1959,36 @@
       }
     });
 
-    document.addEventListener('drop', (e) => {
+    // Handle drop on both document and dropZone
+    document.addEventListener('drop', handleDrop);
+    dropZone.addEventListener('dragover', (e) => {
       e.preventDefault();
-      dropZone.classList.remove('active');
-      handleFiles(e.dataTransfer.files);
+      e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
     });
+    dropZone.addEventListener('drop', handleDrop);
 
     // Paste
     document.addEventListener('paste', async (e) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
       const files = [];
-      for (const item of items) {
-        if (item.type.startsWith('image/') || item.type.startsWith('video/')) {
-          const file = item.getAsFile();
-          if (file) files.push(file);
+
+      // Try clipboardData.files first (Firefox)
+      if (e.clipboardData?.files?.length > 0) {
+        files.push(...Array.from(e.clipboardData.files));
+      }
+
+      // Also check clipboardData.items (Chrome/Safari)
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (const item of items) {
+          if (item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/'))) {
+            const file = item.getAsFile();
+            if (file && !files.some(f => f.name === file.name && f.size === file.size)) {
+              files.push(file);
+            }
+          }
         }
       }
 

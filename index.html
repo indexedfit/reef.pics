@@ -1226,6 +1226,7 @@
 
     // Picture operations
     async function savePicture(file) {
+      if (!db) await initStorage();
       const id = `pic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const isVideo = file.type.startsWith('video/');
 
@@ -1253,6 +1254,7 @@
     }
 
     async function getAllPictures() {
+      if (!db) await initStorage();
       return new Promise((resolve, reject) => {
         const tx = db.transaction('pictures', 'readonly');
         const store = tx.objectStore('pictures');
@@ -1285,6 +1287,7 @@
     }
 
     async function updatePicture(picture) {
+      if (!db) await initStorage();
       return new Promise((resolve, reject) => {
         const tx = db.transaction('pictures', 'readwrite');
         const store = tx.objectStore('pictures');
@@ -1313,6 +1316,9 @@
 
     // Album operations
     async function createAlbum(name) {
+      if (!db) {
+        await initStorage();
+      }
       return new Promise((resolve, reject) => {
         const id = `album_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const album = { id, name, createdAt: Date.now() };
@@ -1327,6 +1333,7 @@
     }
 
     async function getAllAlbums() {
+      if (!db) await initStorage();
       return new Promise((resolve, reject) => {
         const tx = db.transaction('albums', 'readonly');
         const store = tx.objectStore('albums');
@@ -1338,6 +1345,7 @@
     }
 
     async function updateAlbum(album) {
+      if (!db) await initStorage();
       return new Promise((resolve, reject) => {
         const tx = db.transaction('albums', 'readwrite');
         const store = tx.objectStore('albums');
@@ -1822,27 +1830,17 @@
       const files = [];
       const dt = e.dataTransfer;
 
-      console.log('=== DROP DEBUG ===');
-      console.log('types:', dt?.types);
-      console.log('files:', dt?.files?.length);
-      console.log('items:', dt?.items?.length);
-
       // Method 1: Direct files
       if (dt?.files?.length > 0) {
-        console.log('Found direct files');
         files.push(...Array.from(dt.files));
       }
 
       // Method 2: Items with kind=file
       if (files.length === 0 && dt?.items) {
         for (const item of dt.items) {
-          console.log('Item:', item.kind, item.type);
           if (item.kind === 'file') {
             const file = item.getAsFile();
-            if (file) {
-              console.log('Got file from item:', file.name, file.type);
-              files.push(file);
-            }
+            if (file) files.push(file);
           }
         }
       }
@@ -1850,27 +1848,17 @@
       // Method 3: Check for text/html with embedded image
       if (files.length === 0 && dt?.types?.includes('text/html')) {
         const html = dt.getData('text/html');
-        console.log('HTML content:', html?.substring(0, 200));
-
-        // Extract img src from HTML
         const imgMatch = html?.match(/<img[^>]+src=["']([^"']+)["']/i);
         if (imgMatch?.[1]) {
           const imgUrl = imgMatch[1];
-          console.log('Found img src:', imgUrl);
-
-          // Handle data URLs directly
           if (imgUrl.startsWith('data:')) {
             try {
               const response = await fetch(imgUrl);
               const blob = await response.blob();
               const file = new File([blob], `image_${Date.now()}.png`, { type: blob.type });
               files.push(file);
-              console.log('Created file from data URL');
-            } catch (err) {
-              console.log('Failed to parse data URL:', err);
-            }
+            } catch (err) {}
           } else if (imgUrl.startsWith('http')) {
-            // Try to fetch the image
             try {
               showToast('Fetching image...');
               const response = await fetch(imgUrl);
@@ -1880,12 +1868,9 @@
                   const ext = blob.type.split('/')[1]?.split(';')[0] || 'png';
                   const file = new File([blob], `image_${Date.now()}.${ext}`, { type: blob.type });
                   files.push(file);
-                  console.log('Fetched image from HTML src');
                 }
               }
-            } catch (err) {
-              console.log('CORS blocked img src:', imgUrl);
-            }
+            } catch (err) {}
           }
         }
       }
@@ -1893,18 +1878,14 @@
       // Method 4: URI list (last resort)
       if (files.length === 0) {
         const urls = [];
-
         if (dt?.types?.includes('text/uri-list')) {
           const uriList = dt.getData('text/uri-list');
           urls.push(...(uriList?.split('\n').filter(u => u && !u.startsWith('#')) || []));
         }
-
         if (dt?.types?.includes('text/x-moz-url')) {
           const mozUrl = dt.getData('text/x-moz-url');
           if (mozUrl) urls.push(mozUrl.split('\n')[0]);
         }
-
-        console.log('URLs to try:', urls);
 
         for (const url of urls) {
           if (url?.startsWith('http')) {
@@ -1920,15 +1901,12 @@
                 }
               }
             } catch (err) {
-              console.log('CORS blocked:', url);
               showToast('CORS blocked - use Copy Image + Paste instead');
               return;
             }
           }
         }
       }
-
-      console.log('Total files:', files.length);
 
       if (files.length > 0) {
         handleFiles(files);

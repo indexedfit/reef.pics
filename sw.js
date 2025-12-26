@@ -33,6 +33,11 @@ self.addEventListener('message', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
+  // Only handle http/https requests (ignore chrome-extension, etc)
+  if (!url.protocol.startsWith('http')) {
+    return;
+  }
+
   // Network-first for HTML pages (always get fresh content)
   if (e.request.mode === 'navigate' || url.pathname.endsWith('.html') || url.pathname === '/') {
     e.respondWith(

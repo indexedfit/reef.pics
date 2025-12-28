@@ -397,11 +397,15 @@
       outline-offset: 2px;
     }
 
-    .grid-item img,
-    .grid-item video {
+    .grid-item img {
       width: 100%;
       height: 100%;
       object-fit: cover;
+      background: var(--border);
+    }
+
+    .grid-item img:not([src]) {
+      opacity: 0;
     }
 
     .grid-item .video-indicator {
@@ -1117,6 +1121,39 @@
       }
     }
 
+    // Generate thumbnails for existing media (background task)
+    async function generateMissingThumbnails() {
+      const pics = await getAllPictures();
+      let generated = 0;
+
+      for (const pic of pics) {
+        const thumbId = getThumbId(pic.id);
+        const existingThumb = await getFile(thumbId);
+
+        if (!existingThumb) {
+          try {
+            const blob = await getFile(pic.id);
+            if (!blob) continue;
+
+            const thumb = pic.isVideo
+              ? await generateVideoThumbnail(blob)
+              : await generateImageThumbnail(blob);
+
+            if (thumb) {
+              await saveFile(thumbId, thumb);
+              generated++;
+            }
+          } catch (e) {
+            // Skip failed thumbnails silently
+          }
+        }
+      }
+
+      if (generated > 0) {
+        console.log(`Generated ${generated} thumbnails`);
+      }
+    }
+
     // OPFS file operations
     async function saveFileToOPFS(id, blob) {
       const fileHandle = await opfsRoot.getFileHandle(id, { create: true });
@@ -1224,6 +1261,103 @@
       objectURLs.clear();
     }
 
+    // Thumbnail generation for performance
+    const THUMB_SIZE = 400;
+    const THUMB_QUALITY = 0.8;
+
+    async function generateVideoThumbnail(videoBlob) {
+      return new Promise((resolve, reject) => {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+
+        const url = URL.createObjectURL(videoBlob);
+        video.src = url;
+
+        const cleanup = () => {
+          URL.revokeObjectURL(url);
+          video.src = '';
+          video.load();
+        };
+
+        video.onloadedmetadata = () => {
+          video.currentTime = Math.min(1, video.duration * 0.1);
+        };
+
+        video.onseeked = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            const scale = Math.min(THUMB_SIZE / video.videoWidth, THUMB_SIZE / video.videoHeight, 1);
+            canvas.width = video.videoWidth * scale;
+            canvas.height = video.videoHeight * scale;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            canvas.toBlob((blob) => {
+              cleanup();
+              resolve(blob);
+            }, 'image/jpeg', THUMB_QUALITY);
+          } catch (e) {
+            cleanup();
+            reject(e);
+          }
+        };
+
+        video.onerror = () => {
+          cleanup();
+          reject(new Error('Video load failed'));
+        };
+
+        setTimeout(() => {
+          cleanup();
+          reject(new Error('Thumbnail timeout'));
+        }, 10000);
+      });
+    }
+
+    async function generateImageThumbnail(imageBlob) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(imageBlob);
+
+        const cleanup = () => URL.revokeObjectURL(url);
+
+        img.onload = () => {
+          if (img.width <= THUMB_SIZE && img.height <= THUMB_SIZE) {
+            cleanup();
+            resolve(imageBlob);
+            return;
+          }
+
+          const canvas = document.createElement('canvas');
+          const scale = Math.min(THUMB_SIZE / img.width, THUMB_SIZE / img.height);
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          canvas.toBlob((blob) => {
+            cleanup();
+            resolve(blob);
+          }, 'image/jpeg', THUMB_QUALITY);
+        };
+
+        img.onerror = () => {
+          cleanup();
+          reject(new Error('Image load failed'));
+        };
+
+        img.src = url;
+      });
+    }
+
+    function getThumbId(id) {
+      return `thumb_${id}`;
+    }
+
     // Picture operations
     async function savePicture(file) {
       if (!db) await initStorage();
@@ -1233,6 +1367,19 @@
       // Save the file blob
       await saveFile(id, file);
 
+      // Generate and save thumbnail (non-blocking for better UX)
+      const thumbId = getThumbId(id);
+      (async () => {
+        try {
+          const thumb = isVideo
+            ? await generateVideoThumbnail(file)
+            : await generateImageThumbnail(file);
+          if (thumb) await saveFile(thumbId, thumb);
+        } catch (e) {
+          console.warn('Thumbnail generation failed:', e.message);
+        }
+      })();
+
       // Save metadata to IndexedDB
       const picture = {
         id,
@@ -1240,6 +1387,7 @@
         type: file.type,
         size: file.size,
         isVideo,
+        hasThumb: true,
         createdAt: Date.now(),
         albums: []
       };
@@ -1299,9 +1447,11 @@
     }
 
     async function deletePicture(id) {
-      // Delete file
+      // Delete file and thumbnail
       await deleteFile(id);
+      await deleteFile(getThumbId(id)).catch(() => {});
       revokeObjectURL(id);
+      revokeObjectURL(getThumbId(id));
 
       // Delete metadata
       return new Promise((resolve, reject) => {
@@ -1515,19 +1665,30 @@
       });
     }
 
-    // Render grid - uses DOM methods to avoid string length issues with many large files
-    async function renderGrid() {
-      let displayPictures;
+    // Lazy loading observer
+    const lazyObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const item = entry.target;
+          const img = item.querySelector('img');
+          if (img && !img.dataset.loaded) {
+            img.dataset.loaded = 'true';
+            loadThumbnail(img, item.dataset.id);
+          }
+          lazyObserver.unobserve(item);
+        }
+      });
+    }, { rootMargin: '200px', threshold: 0 });
 
-      if (currentView === 'all') {
-        displayPictures = await getAllPictures();
-      } else {
-        displayPictures = await getAlbumPictures(currentAlbumId);
-      }
+    // Render grid with lazy loading
+    async function renderGrid() {
+      const displayPictures = currentView === 'all'
+        ? await getAllPictures()
+        : await getAlbumPictures(currentAlbumId);
 
       pictures = displayPictures;
 
-      if (pictures.length === 0) {
+      if (!pictures.length) {
         grid.innerHTML = '';
         emptyState.style.display = 'flex';
         updateStorageInfo();
@@ -1535,63 +1696,63 @@
       }
 
       emptyState.style.display = 'none';
-
-      // Clear grid and build DOM elements individually
       grid.innerHTML = '';
+
       const fragment = document.createDocumentFragment();
 
-      for (let index = 0; index < pictures.length; index++) {
-        const pic = pictures[index];
+      pictures.forEach((pic, index) => {
         const item = document.createElement('div');
         item.className = 'grid-item' + (selectedPictures.has(pic.id) ? ' selected' : '');
         item.dataset.id = pic.id;
         item.dataset.index = index;
 
-        // Create media element (image or video)
-        if (pic.isVideo) {
-          const video = document.createElement('video');
-          video.muted = true;
-          video.preload = 'metadata';
-          // Load blob and create object URL
-          loadMediaElement(video, pic.id);
+        // Always use img for grid (thumbnails) - even for videos
+        const img = document.createElement('img');
+        img.alt = pic.name || '';
+        item.appendChild(img);
 
-          // Video indicator
+        // Video indicator overlay
+        if (pic.isVideo) {
           const indicator = document.createElement('div');
           indicator.className = 'video-indicator';
-          indicator.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
-          item.appendChild(video);
+          indicator.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
           item.appendChild(indicator);
-        } else {
-          const img = document.createElement('img');
-          img.alt = pic.name || '';
-          img.loading = 'lazy';
-          // Load blob and create object URL
-          loadMediaElement(img, pic.id);
-          item.appendChild(img);
         }
 
-        // Overlay
+        // Overlay with metadata
         const overlay = document.createElement('div');
         overlay.className = 'overlay';
-        const meta = document.createElement('div');
-        meta.className = 'meta';
-        meta.textContent = formatBytes(pic.size);
-        overlay.appendChild(meta);
+        overlay.innerHTML = `<div class="meta">${formatBytes(pic.size)}</div>`;
         item.appendChild(overlay);
 
         fragment.appendChild(item);
-      }
+        lazyObserver.observe(item);
+      });
 
       grid.appendChild(fragment);
 
-      // Update count
+      // Update counts
       const allPics = await getAllPictures();
       allCount.textContent = allPics.length;
       updateStorageInfo();
     }
 
-    // Load media element with object URL from blob storage
-    async function loadMediaElement(element, id) {
+    // Load thumbnail (with fallback to full file for old media)
+    async function loadThumbnail(element, id) {
+      const thumbId = getThumbId(id);
+      let blob = await getFile(thumbId);
+
+      // Fallback to full file if no thumbnail exists
+      if (!blob) blob = await getFile(id);
+
+      if (blob) {
+        const url = createObjectURL(thumbId, blob);
+        element.src = url;
+      }
+    }
+
+    // Load full media for lightbox
+    async function loadFullMedia(element, id) {
       const blob = await getFile(id);
       if (blob) {
         const url = createObjectURL(id, blob);
@@ -2269,6 +2430,8 @@
     initStorage().then(() => {
       renderGrid();
       renderAlbums();
+      // Generate thumbnails for old media in background
+      setTimeout(() => generateMissingThumbnails(), 1000);
     }).catch(err => {
       console.error('Failed to initialize storage:', err);
       showToast('Failed to initialize storage');

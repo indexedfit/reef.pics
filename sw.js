@@ -1,4 +1,4 @@
-const CACHE_NAME = 'researchpics-v3';
+const CACHE_NAME = 'reefpics-v4';
 const ASSETS = [
   '/manifest.json'
 ];

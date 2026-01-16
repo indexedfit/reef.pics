@@ -1,6 +1,6 @@
 {
-  "name": "Research.Pics",
-  "short_name": "Research.Pics",
+  "name": "reef.pics",
+  "short_name": "reef.pics",
   "description": "Local photo album manager - drag, drop, organize",
   "start_url": "/",
   "display": "standalone",

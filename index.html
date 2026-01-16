@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="manifest.json">
-  <title>Research.Pics</title>
+  <title>reef.pics</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
@@ -294,6 +294,11 @@
       border-radius: 4px;
     }
 
+    .content {
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+    }
+
     .drop-zone {
       position: absolute;
       inset: 20px;
@@ -374,6 +379,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 10px;
+      contain: layout style;
     }
 
     .grid-item {
@@ -385,10 +391,12 @@
       background: var(--border);
       transition: transform var(--transition), box-shadow var(--transition);
       box-shadow: var(--shadow-sm);
+      contain: layout style paint;
+      content-visibility: auto;
     }
 
     .grid-item:hover {
-      transform: translateY(-2px);
+      transform: translateY(-2px) translateZ(0);
       box-shadow: var(--shadow);
     }
 
@@ -472,6 +480,7 @@
       max-width: 90vw;
       max-height: 90vh;
       position: relative;
+      contain: layout style paint;
     }
 
     .lightbox-content img,
@@ -613,6 +622,7 @@
       width: 320px;
       max-width: 90vw;
       box-shadow: 0 16px 48px rgba(0,0,0,0.15);
+      contain: layout style paint;
     }
 
     .modal h3 {
@@ -717,6 +727,60 @@
       margin: 4px 0;
     }
 
+    /* FPS Counter */
+    .fps-counter {
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      z-index: 50;
+      opacity: 0.7;
+      transition: opacity var(--transition);
+      user-select: none;
+    }
+
+    .fps-counter:hover {
+      opacity: 1;
+    }
+
+    /* Action Notification (copy/paste) */
+    .action-notif {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.8);
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      padding: 16px 24px;
+      border-radius: 12px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px;
+      z-index: 400;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms ease, transform 150ms ease;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      backdrop-filter: blur(8px);
+    }
+
+    .action-notif.active {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    .action-notif svg {
+      width: 20px;
+      height: 20px;
+    }
+
     /* Mobile */
     @media (max-width: 768px) {
       .app {
@@ -810,7 +874,7 @@
     <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
     <aside class="sidebar" id="sidebar">
       <div class="logo">
-        <h1>Research<span>.Pics</span></h1>
+        <h1>reef<span>.pics</span></h1>
       </div>
       <nav class="nav-section">
         <div class="nav-label">Library</div>
@@ -1032,10 +1096,19 @@
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 
+  <!-- FPS Counter -->
+  <div class="fps-counter" id="fpsCounter">-- fps</div>
+
+  <!-- Action Notification -->
+  <div class="action-notif" id="actionNotif">
+    <svg id="actionNotifIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"></svg>
+    <span id="actionNotifText"></span>
+  </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
     // Storage abstraction - OPFS with IndexedDB fallback
-    const DB_NAME = 'researchpics';
+    const DB_NAME = 'reefpics';
     const DB_VERSION = 2;
     let db;
     let useOPFS = false;
@@ -1083,8 +1156,97 @@
         };
       });
 
+      // Migrate from old 'researchpics' database if it exists
+      await migrateFromOldDatabase();
+
       // Migrate old data format (base64 data URLs) to new format (blobs)
       await migrateOldData();
+    }
+
+    // Migrate data from old 'researchpics' database to new 'reefpics'
+    async function migrateFromOldDatabase() {
+      const OLD_DB_NAME = 'researchpics';
+
+      // Check if old database exists
+      const databases = await indexedDB.databases?.() || [];
+      const oldDbExists = databases.some(d => d.name === OLD_DB_NAME);
+      if (!oldDbExists) return;
+
+      // Check if we already migrated (flag in localStorage)
+      if (localStorage.getItem('reefpics_migrated')) return;
+
+      console.log('Migrating from old researchpics database...');
+
+      try {
+        // Open old database
+        const oldDb = await new Promise((resolve, reject) => {
+          const request = indexedDB.open(OLD_DB_NAME);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+        });
+
+        // Copy pictures
+        const oldPics = await new Promise((resolve, reject) => {
+          const tx = oldDb.transaction('pictures', 'readonly');
+          const store = tx.objectStore('pictures');
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+        });
+
+        for (const pic of oldPics) {
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction('pictures', 'readwrite');
+            tx.objectStore('pictures').put(pic);
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+        }
+
+        // Copy albums
+        const oldAlbums = await new Promise((resolve, reject) => {
+          const tx = oldDb.transaction('albums', 'readonly');
+          const store = tx.objectStore('albums');
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+        });
+
+        for (const album of oldAlbums) {
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction('albums', 'readwrite');
+            tx.objectStore('albums').put(album);
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+        }
+
+        // Copy blobs (if not using OPFS)
+        if (oldDb.objectStoreNames.contains('blobs')) {
+          const oldBlobs = await new Promise((resolve, reject) => {
+            const tx = oldDb.transaction('blobs', 'readonly');
+            const store = tx.objectStore('blobs');
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+          });
+
+          for (const blob of oldBlobs) {
+            await new Promise((resolve, reject) => {
+              const tx = db.transaction('blobs', 'readwrite');
+              tx.objectStore('blobs').put(blob);
+              tx.oncomplete = resolve;
+              tx.onerror = () => reject(tx.error);
+            });
+          }
+        }
+
+        oldDb.close();
+        localStorage.setItem('reefpics_migrated', 'true');
+        console.log(`Migrated ${oldPics.length} pictures, ${oldAlbums.length} albums from old database`);
+      } catch (e) {
+        console.warn('Migration from old database failed:', e);
+      }
     }
 
     // Migrate old pictures that have inline data URLs to new blob storage
@@ -1122,35 +1284,58 @@
     }
 
     // Generate thumbnails for existing media (background task)
+    // Generate thumbnails during idle time to avoid blocking main thread
     async function generateMissingThumbnails() {
       const pics = await getAllPictures();
-      let generated = 0;
+      const picsNeedingThumbs = [];
 
+      // First pass: identify which pics need thumbnails
       for (const pic of pics) {
         const thumbId = getThumbId(pic.id);
         const existingThumb = await getFile(thumbId);
+        if (!existingThumb) picsNeedingThumbs.push(pic);
+      }
 
-        if (!existingThumb) {
+      if (picsNeedingThumbs.length === 0) return;
+
+      let generated = 0;
+      let index = 0;
+
+      const processNext = async (deadline) => {
+        // Process while we have idle time (at least 10ms)
+        while (index < picsNeedingThumbs.length && deadline.timeRemaining() > 10) {
+          const pic = picsNeedingThumbs[index];
           try {
             const blob = await getFile(pic.id);
-            if (!blob) continue;
-
-            const thumb = pic.isVideo
-              ? await generateVideoThumbnail(blob)
-              : await generateImageThumbnail(blob);
-
-            if (thumb) {
-              await saveFile(thumbId, thumb);
-              generated++;
+            if (blob) {
+              const thumb = pic.isVideo
+                ? await generateVideoThumbnail(blob)
+                : await generateImageThumbnail(blob);
+              if (thumb) {
+                await saveFile(getThumbId(pic.id), thumb);
+                generated++;
+              }
             }
           } catch (e) {
             // Skip failed thumbnails silently
           }
+          index++;
         }
-      }
 
-      if (generated > 0) {
-        console.log(`Generated ${generated} thumbnails`);
+        if (index < picsNeedingThumbs.length) {
+          // More work to do, schedule next idle callback
+          requestIdleCallback(processNext, { timeout: 5000 });
+        } else if (generated > 0) {
+          console.log(`Generated ${generated} thumbnails`);
+        }
+      };
+
+      // Use requestIdleCallback if available, otherwise fall back to setTimeout
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(processNext, { timeout: 5000 });
+      } else {
+        // Fallback for Safari
+        setTimeout(() => processNext({ timeRemaining: () => 50 }), 100);
       }
     }
 
@@ -1616,14 +1801,25 @@
       showToast('Preparing download...');
 
       const zip = new JSZip();
-      const folder = zip.folder('researchpics');
+      const folder = zip.folder('reefpics');
+      const usedNames = new Set();
 
       let index = 0;
       for (const picId of selectedPictures) {
         const pic = await getPictureWithBlob(picId);
         if (pic && pic.blob) {
-          const ext = pic.type.split('/')[1] || 'png';
-          const filename = pic.name || `media_${index + 1}.${ext}`;
+          const ext = pic.type.split('/')[1]?.split(';')[0] || 'png';
+          let baseName = pic.name ? pic.name.replace(/\.[^.]+$/, '') : `media_${index + 1}`;
+          let filename = `${baseName}.${ext}`;
+
+          // Ensure unique filename
+          let counter = 1;
+          while (usedNames.has(filename.toLowerCase())) {
+            filename = `${baseName}_${counter}.${ext}`;
+            counter++;
+          }
+          usedNames.add(filename.toLowerCase());
+
           folder.file(filename, pic.blob);
           index++;
         }
@@ -1633,7 +1829,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `researchpics_${Date.now()}.zip`;
+      a.download = `reefpics_${Date.now()}.zip`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1665,20 +1861,24 @@
       });
     }
 
-    // Lazy loading observer
+    // Lazy loading observer - optimized with larger margins for smoother scrolling
     const lazyObserver = new IntersectionObserver((entries) => {
+      // Batch DOM reads/writes
+      const toLoad = [];
       entries.forEach(entry => {
         if (entry.isIntersecting) {
           const item = entry.target;
           const img = item.querySelector('img');
           if (img && !img.dataset.loaded) {
             img.dataset.loaded = 'true';
-            loadThumbnail(img, item.dataset.id);
+            toLoad.push({ img, id: item.dataset.id });
           }
           lazyObserver.unobserve(item);
         }
       });
-    }, { rootMargin: '200px', threshold: 0 });
+      // Load all visible images
+      toLoad.forEach(({ img, id }) => loadThumbnail(img, id));
+    }, { rootMargin: '300px 0px', threshold: 0.01 });
 
     // Render grid with lazy loading
     async function renderGrid() {
@@ -1748,6 +1948,8 @@
       if (blob) {
         const url = createObjectURL(thumbId, blob);
         element.src = url;
+        // Decode off-main-thread for smoother rendering
+        element.decode?.().catch(() => {});
       }
     }
 
@@ -1902,6 +2104,14 @@
       lightboxCounter.textContent = `${lightboxIndex + 1} / ${pictures.length}`;
       lightboxSize.textContent = formatBytes(pic.size);
       lightboxDate.textContent = formatDate(pic.createdAt);
+
+      // Preload adjacent images for instant navigation
+      if (pictures.length > 1) {
+        const prevIdx = (lightboxIndex - 1 + pictures.length) % pictures.length;
+        const nextIdx = (lightboxIndex + 1) % pictures.length;
+        getFile(pictures[prevIdx]?.id).catch(() => {});
+        getFile(pictures[nextIdx]?.id).catch(() => {});
+      }
     }
 
     function lightboxPrev() {
@@ -2076,12 +2286,15 @@
       }
     }
 
-    // Drag and drop events
+    // Drag and drop events (passive where possible for perf)
+    let dragLeaveTimeout;
+
     document.addEventListener('dragenter', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      clearTimeout(dragLeaveTimeout);
       dropZone.classList.add('active');
-    });
+    }, { passive: false });
 
     document.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -2089,14 +2302,19 @@
       if (e.dataTransfer) {
         e.dataTransfer.dropEffect = 'copy';
       }
+      clearTimeout(dragLeaveTimeout);
       dropZone.classList.add('active');
-    });
+    }, { passive: false });
 
     document.addEventListener('dragleave', (e) => {
-      if (!e.relatedTarget || !document.body.contains(e.relatedTarget)) {
-        dropZone.classList.remove('active');
-      }
-    });
+      // Debounce to prevent flicker when dragging between elements
+      clearTimeout(dragLeaveTimeout);
+      dragLeaveTimeout = setTimeout(() => {
+        if (!e.relatedTarget || !document.body.contains(e.relatedTarget)) {
+          dropZone.classList.remove('active');
+        }
+      }, 50);
+    }, { passive: true });
 
     // Handle drop on both document and dropZone
     document.addEventListener('drop', handleDrop);
@@ -2411,6 +2629,76 @@
         switchView('all');
         renderGrid();
         renderAlbums();
+      }
+    });
+
+    // FPS Counter - smooth rolling average
+    const fpsCounter = document.getElementById('fpsCounter');
+    const fpsSamples = [];
+    const FPS_SAMPLE_SIZE = 20;
+    let lastFrameTime = performance.now();
+    let fpsAnimationId;
+
+    function updateFPS(now) {
+      const delta = now - lastFrameTime;
+      lastFrameTime = now;
+
+      if (delta > 0) {
+        const fps = 1000 / delta;
+        fpsSamples.push(fps);
+        if (fpsSamples.length > FPS_SAMPLE_SIZE) {
+          fpsSamples.shift();
+        }
+
+        // Calculate smooth average
+        const avgFps = fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length;
+        fpsCounter.textContent = `${Math.round(avgFps)} fps`;
+      }
+
+      fpsAnimationId = requestAnimationFrame(updateFPS);
+    }
+
+    // Start FPS monitoring
+    fpsAnimationId = requestAnimationFrame(updateFPS);
+
+    // Action Notification (copy/paste)
+    const actionNotif = document.getElementById('actionNotif');
+    const actionNotifIcon = document.getElementById('actionNotifIcon');
+    const actionNotifText = document.getElementById('actionNotifText');
+    let actionNotifTimeout;
+
+    function showActionNotif(type) {
+      clearTimeout(actionNotifTimeout);
+
+      const icons = {
+        copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+        paste: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>'
+      };
+
+      const labels = {
+        copy: 'Copied',
+        paste: 'Pasted'
+      };
+
+      actionNotifIcon.innerHTML = icons[type] || '';
+      actionNotifText.textContent = labels[type] || type;
+      actionNotif.classList.add('active');
+
+      actionNotifTimeout = setTimeout(() => {
+        actionNotif.classList.remove('active');
+      }, 800);
+    }
+
+    // Listen for copy/paste key combos
+    document.addEventListener('keydown', (e) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const modifier = isMac ? e.metaKey : e.ctrlKey;
+
+      if (modifier && e.key === 'c') {
+        // Small delay to let the browser handle the copy first
+        setTimeout(() => showActionNotif('copy'), 50);
+      } else if (modifier && e.key === 'v') {
+        setTimeout(() => showActionNotif('paste'), 50);
       }
     });
 

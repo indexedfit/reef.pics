@@ -3191,14 +3191,61 @@
       }, 800);
     }
 
+    // Copy image to clipboard
+    async function copyImageToClipboard(picId) {
+      try {
+        const blob = await getFile(picId);
+        if (!blob) {
+          showToast('Failed to copy');
+          return false;
+        }
+
+        // Convert to PNG for clipboard compatibility (most apps expect PNG)
+        let pngBlob = blob;
+        if (!blob.type.includes('png')) {
+          const img = new Image();
+          const url = URL.createObjectURL(blob);
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = url;
+          });
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(url);
+          pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        }
+
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': pngBlob })
+        ]);
+        showActionNotif('copy');
+        return true;
+      } catch (err) {
+        console.error('Copy failed:', err);
+        showToast('Failed to copy');
+        return false;
+      }
+    }
+
     // Listen for copy/paste key combos
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', async (e) => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const modifier = isMac ? e.metaKey : e.ctrlKey;
 
       if (modifier && e.key === 'c') {
-        // Small delay to let the browser handle the copy first
-        setTimeout(() => showActionNotif('copy'), 50);
+        // Copy image if in lightbox or has selection
+        if (lightbox.classList.contains('active') && pictures[lightboxIndex]) {
+          e.preventDefault();
+          await copyImageToClipboard(pictures[lightboxIndex].id);
+        } else if (selectedPictures.size > 0) {
+          e.preventDefault();
+          const firstSelected = selectedPictures.values().next().value;
+          await copyImageToClipboard(firstSelected);
+        }
       } else if (modifier && e.key === 'v') {
         setTimeout(() => showActionNotif('paste'), 50);
       }

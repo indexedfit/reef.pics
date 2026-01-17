@@ -405,6 +405,24 @@
       outline-offset: 2px;
     }
 
+    .grid-item.dragging {
+      opacity: 0.5;
+      transform: scale(0.95);
+    }
+
+    .grid-item.drag-over {
+      outline: 2px dashed var(--text);
+      outline-offset: 2px;
+    }
+
+    .grid-item[draggable="true"] {
+      cursor: grab;
+    }
+
+    .grid-item[draggable="true"]:active {
+      cursor: grabbing;
+    }
+
     .grid-item img {
       width: 100%;
       height: 100%;
@@ -455,6 +473,137 @@
       font-family: 'IBM Plex Mono', monospace;
       font-size: 10px;
       color: rgba(255,255,255,0.9);
+    }
+
+    /* List View */
+    .list-view {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .list-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background var(--transition), transform var(--transition);
+    }
+
+    .list-item:hover {
+      background: var(--surface-hover);
+    }
+
+    .list-item.selected {
+      outline: 2px solid var(--text);
+      outline-offset: -2px;
+    }
+
+    .list-item-thumb {
+      width: 48px;
+      height: 48px;
+      border-radius: 4px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: var(--border);
+    }
+
+    .list-item-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .list-item-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .list-item-name {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .list-item-meta {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .list-item-badge {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      padding: 2px 6px;
+      background: var(--border);
+      border-radius: 3px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    /* View toggle and sort controls */
+    .view-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .view-toggle {
+      display: flex;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .view-toggle button {
+      background: none;
+      border: none;
+      padding: 5px 8px;
+      cursor: pointer;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--transition);
+    }
+
+    .view-toggle button:hover {
+      color: var(--text);
+    }
+
+    .view-toggle button.active {
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .view-toggle button svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .sort-select {
+      padding: 5px 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: var(--text);
+      cursor: pointer;
+      outline: none;
+    }
+
+    .sort-select:hover {
+      border-color: var(--text-muted);
     }
 
     /* Lightbox */
@@ -906,6 +1055,7 @@
           <button id="clearStorageBtn" style="background: none; border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font-family: inherit; font-size: 9px; color: var(--text-muted); cursor: pointer;">Clear</button>
         </div>
         <div id="storageInfo" style="margin-top: 6px; font-size: 9px; opacity: 0.7;"></div>
+        <button id="aboutBtn" style="background: none; border: none; padding: 0; margin-top: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-muted); cursor: pointer; opacity: 0.7; transition: opacity 150ms;">About</button>
       </div>
     </aside>
 
@@ -922,6 +1072,36 @@
           <h2 id="viewTitle">All Pictures</h2>
         </div>
         <div class="header-actions">
+          <div class="view-controls">
+            <div class="view-toggle">
+              <button id="gridViewBtn" class="active" title="Grid view">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7"/>
+                  <rect x="14" y="3" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/>
+                  <rect x="14" y="14" width="7" height="7"/>
+                </svg>
+              </button>
+              <button id="listViewBtn" title="List view">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="8" y1="6" x2="21" y2="6"/>
+                  <line x1="8" y1="12" x2="21" y2="12"/>
+                  <line x1="8" y1="18" x2="21" y2="18"/>
+                  <line x1="3" y1="6" x2="3.01" y2="6"/>
+                  <line x1="3" y1="12" x2="3.01" y2="12"/>
+                  <line x1="3" y1="18" x2="3.01" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <select id="sortSelect" class="sort-select" style="display: none;">
+              <option value="date-desc">Date (newest)</option>
+              <option value="date-asc">Date (oldest)</option>
+              <option value="name-asc">Name (A-Z)</option>
+              <option value="name-desc">Name (Z-A)</option>
+              <option value="size-desc">Size (largest)</option>
+              <option value="size-asc">Size (smallest)</option>
+            </select>
+          </div>
           <button class="btn" id="selectAllBtn" style="display: none;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -936,6 +1116,16 @@
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
             Download (<span id="selectedCount">0</span>)
+          </button>
+          <button class="btn" id="shuffleBtn" style="display: none;" title="Shuffle order">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 3 21 3 21 8"/>
+              <line x1="4" y1="20" x2="21" y2="3"/>
+              <polyline points="21 16 21 21 16 21"/>
+              <line x1="15" y1="15" x2="21" y2="21"/>
+              <line x1="4" y1="4" x2="9" y2="9"/>
+            </svg>
+            Shuffle
           </button>
           <button class="btn" id="selectBtn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -980,6 +1170,7 @@
         </div>
 
         <div class="grid" id="grid"></div>
+        <div class="list-view" id="listView" style="display: none;"></div>
       </div>
     </main>
   </div>
@@ -1054,6 +1245,21 @@
       <div id="albumSelectList" style="max-height: 200px; overflow-y: auto;"></div>
       <div class="modal-actions">
         <button class="btn" id="cancelAddToAlbumBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- About Modal -->
+  <div class="modal-overlay" id="aboutModal">
+    <div class="modal" style="max-width: 360px;">
+      <h3>About reef.pics</h3>
+      <div style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+        <p style="margin-bottom: 12px;">A simple, private gallery for managing your photos and videos.</p>
+        <p style="margin-bottom: 12px;">All your media is stored locally in your browser. Nothing is uploaded to any server - your files stay on your device.</p>
+        <p>Access your albums from any device by using the same browser.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="closeAboutBtn">Got it</button>
       </div>
     </div>
   </div>
@@ -1712,8 +1918,25 @@
     }
 
     async function getAlbumPictures(albumId) {
-      const pictures = await getAllPictures();
-      return pictures.filter(p => p.albums.includes(albumId));
+      const allPics = await getAllPictures();
+      const albumPics = allPics.filter(p => p.albums.includes(albumId));
+
+      // Get album to check for custom order
+      const albums = await getAllAlbums();
+      const album = albums.find(a => a.id === albumId);
+
+      if (album && album.order && album.order.length > 0) {
+        // Sort by custom order, with any new pics at the end
+        const orderMap = new Map(album.order.map((id, idx) => [id, idx]));
+        albumPics.sort((a, b) => {
+          const aIdx = orderMap.has(a.id) ? orderMap.get(a.id) : Infinity;
+          const bIdx = orderMap.has(b.id) ? orderMap.get(b.id) : Infinity;
+          if (aIdx === bIdx) return b.createdAt - a.createdAt;
+          return aIdx - bIdx;
+        });
+      }
+
+      return albumPics;
     }
 
     // Clear all storage
@@ -1759,6 +1982,9 @@
     let lightboxIndex = 0;
     let contextPictureId = null;
     let editingAlbumId = null;
+    let viewMode = localStorage.getItem('viewMode') || 'grid';
+    let sortBy = localStorage.getItem('sortBy') || 'date';
+    let sortDir = localStorage.getItem('sortDir') || 'desc';
 
     // DOM Elements
     const grid = document.getElementById('grid');
@@ -1880,25 +2106,70 @@
       toLoad.forEach(({ img, id }) => loadThumbnail(img, id));
     }, { rootMargin: '300px 0px', threshold: 0.01 });
 
+    // Sort pictures based on current sort settings
+    function sortPictures(pics) {
+      const sorted = [...pics];
+      sorted.sort((a, b) => {
+        let cmp = 0;
+        if (sortBy === 'date') {
+          cmp = a.createdAt - b.createdAt;
+        } else if (sortBy === 'name') {
+          cmp = (a.name || '').localeCompare(b.name || '');
+        } else if (sortBy === 'size') {
+          cmp = a.size - b.size;
+        }
+        return sortDir === 'desc' ? -cmp : cmp;
+      });
+      return sorted;
+    }
+
     // Render grid with lazy loading
     async function renderGrid() {
-      const displayPictures = currentView === 'all'
+      let displayPictures = currentView === 'all'
         ? await getAllPictures()
         : await getAlbumPictures(currentAlbumId);
 
+      // Apply sorting (list view always sorts, grid view uses default date sort)
+      if (viewMode === 'list') {
+        displayPictures = sortPictures(displayPictures);
+      }
+
       pictures = displayPictures;
+
+      const listView = document.getElementById('listView');
 
       if (!pictures.length) {
         grid.innerHTML = '';
+        listView.innerHTML = '';
         emptyState.style.display = 'flex';
         updateStorageInfo();
         return;
       }
 
       emptyState.style.display = 'none';
-      grid.innerHTML = '';
 
+      // Toggle grid/list visibility
+      if (viewMode === 'grid') {
+        grid.style.display = 'grid';
+        listView.style.display = 'none';
+        renderGridView();
+      } else {
+        grid.style.display = 'none';
+        listView.style.display = 'flex';
+        renderListView();
+      }
+
+      // Update counts
+      const allPics = await getAllPictures();
+      allCount.textContent = allPics.length;
+      updateStorageInfo();
+    }
+
+    // Render grid view
+    function renderGridView() {
+      grid.innerHTML = '';
       const fragment = document.createDocumentFragment();
+      const isDraggable = currentView === 'album';
 
       pictures.forEach((pic, index) => {
         const item = document.createElement('div');
@@ -1906,12 +2177,15 @@
         item.dataset.id = pic.id;
         item.dataset.index = index;
 
-        // Always use img for grid (thumbnails) - even for videos
+        // Enable drag-and-drop in album view
+        if (isDraggable) {
+          item.draggable = true;
+        }
+
         const img = document.createElement('img');
         img.alt = pic.name || '';
         item.appendChild(img);
 
-        // Video indicator overlay
         if (pic.isVideo) {
           const indicator = document.createElement('div');
           indicator.className = 'video-indicator';
@@ -1919,7 +2193,6 @@
           item.appendChild(indicator);
         }
 
-        // Overlay with metadata
         const overlay = document.createElement('div');
         overlay.className = 'overlay';
         overlay.innerHTML = `<div class="meta">${formatBytes(pic.size)}</div>`;
@@ -1930,11 +2203,45 @@
       });
 
       grid.appendChild(fragment);
+    }
 
-      // Update counts
-      const allPics = await getAllPictures();
-      allCount.textContent = allPics.length;
-      updateStorageInfo();
+    // Render list view
+    function renderListView() {
+      const listView = document.getElementById('listView');
+      listView.innerHTML = '';
+      const fragment = document.createDocumentFragment();
+
+      pictures.forEach((pic, index) => {
+        const item = document.createElement('div');
+        item.className = 'list-item' + (selectedPictures.has(pic.id) ? ' selected' : '');
+        item.dataset.id = pic.id;
+        item.dataset.index = index;
+
+        const thumb = document.createElement('div');
+        thumb.className = 'list-item-thumb';
+        const img = document.createElement('img');
+        img.alt = pic.name || '';
+        thumb.appendChild(img);
+        item.appendChild(thumb);
+
+        const info = document.createElement('div');
+        info.className = 'list-item-info';
+        info.innerHTML = `
+          <div class="list-item-name">${pic.name || 'Untitled'}</div>
+          <div class="list-item-meta">${formatBytes(pic.size)} · ${formatDate(pic.createdAt)}</div>
+        `;
+        item.appendChild(info);
+
+        const badge = document.createElement('span');
+        badge.className = 'list-item-badge';
+        badge.textContent = pic.isVideo ? 'Video' : 'Image';
+        item.appendChild(badge);
+
+        fragment.appendChild(item);
+        lazyObserver.observe(item);
+      });
+
+      listView.appendChild(fragment);
     }
 
     // Load thumbnail (with fallback to full file for old media)
@@ -2017,11 +2324,15 @@
         </svg>
         Select
       `;
-      
+
+      // Show/hide shuffle button based on view
+      const shuffleBtn = document.getElementById('shuffleBtn');
+      shuffleBtn.style.display = view === 'album' ? 'flex' : 'none';
+
       document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
       });
-      
+
       if (view === 'all') {
         viewTitle.textContent = 'All Pictures';
         document.querySelector('[data-view="all"]').classList.add('active');
@@ -2030,7 +2341,7 @@
         viewTitle.textContent = album ? album.name : 'Album';
         document.querySelector(`[data-album-id="${albumId}"]`)?.classList.add('active');
       }
-      
+
       renderGrid();
       closeSidebar();
     }
@@ -2397,6 +2708,49 @@
       contextMenu.classList.add('active');
     });
 
+    // List view clicks
+    const listView = document.getElementById('listView');
+    listView.addEventListener('click', (e) => {
+      const item = e.target.closest('.list-item');
+      if (!item) return;
+
+      const id = item.dataset.id;
+      const index = parseInt(item.dataset.index);
+
+      if (isSelectMode) {
+        if (selectedPictures.has(id)) {
+          selectedPictures.delete(id);
+          item.classList.remove('selected');
+        } else {
+          selectedPictures.add(id);
+          item.classList.add('selected');
+        }
+        updateSelectionUI();
+      } else {
+        openLightbox(index);
+      }
+    });
+
+    // List view right-click
+    listView.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const item = e.target.closest('.list-item');
+      if (!item) return;
+
+      contextPictureId = item.dataset.id;
+
+      const removeOption = document.getElementById('ctxRemoveFromAlbum');
+      if (currentView === 'album') {
+        removeOption.style.display = 'flex';
+      } else {
+        removeOption.style.display = 'none';
+      }
+
+      contextMenu.style.left = e.pageX + 'px';
+      contextMenu.style.top = e.pageY + 'px';
+      contextMenu.classList.add('active');
+    });
+
     // Close context menu
     document.addEventListener('click', () => {
       contextMenu.classList.remove('active');
@@ -2428,6 +2782,142 @@
       showToast('Picture deleted');
       renderGrid();
       renderAlbums();
+    });
+
+    // View toggle
+    const gridViewBtn = document.getElementById('gridViewBtn');
+    const listViewBtn = document.getElementById('listViewBtn');
+    const sortSelect = document.getElementById('sortSelect');
+
+    function updateViewToggle() {
+      gridViewBtn.classList.toggle('active', viewMode === 'grid');
+      listViewBtn.classList.toggle('active', viewMode === 'list');
+      sortSelect.style.display = viewMode === 'list' ? 'block' : 'none';
+    }
+
+    gridViewBtn.addEventListener('click', () => {
+      viewMode = 'grid';
+      localStorage.setItem('viewMode', viewMode);
+      updateViewToggle();
+      renderGrid();
+    });
+
+    listViewBtn.addEventListener('click', () => {
+      viewMode = 'list';
+      localStorage.setItem('viewMode', viewMode);
+      updateViewToggle();
+      renderGrid();
+    });
+
+    sortSelect.addEventListener('change', () => {
+      const [by, dir] = sortSelect.value.split('-');
+      sortBy = by;
+      sortDir = dir;
+      localStorage.setItem('sortBy', sortBy);
+      localStorage.setItem('sortDir', sortDir);
+      renderGrid();
+    });
+
+    // Initialize view toggle state
+    updateViewToggle();
+    sortSelect.value = `${sortBy}-${sortDir}`;
+
+    // Shuffle and drag-and-drop for albums
+    async function saveAlbumOrder(albumId, order) {
+      const albumsList = await getAllAlbums();
+      const album = albumsList.find(a => a.id === albumId);
+      if (album) {
+        album.order = order;
+        await updateAlbum(album);
+      }
+    }
+
+    // Fisher-Yates shuffle
+    function shuffleArray(array) {
+      const shuffled = [...array];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    }
+
+    // Shuffle button handler
+    document.getElementById('shuffleBtn').addEventListener('click', async () => {
+      if (currentView !== 'album' || !currentAlbumId) return;
+
+      const shuffledIds = shuffleArray(pictures.map(p => p.id));
+      await saveAlbumOrder(currentAlbumId, shuffledIds);
+      showToast('Shuffled');
+      renderGrid();
+    });
+
+    // Drag and drop state
+    let draggedItem = null;
+    let draggedId = null;
+
+    // Setup drag-and-drop handlers on grid
+    grid.addEventListener('dragstart', (e) => {
+      const item = e.target.closest('.grid-item');
+      if (!item || currentView !== 'album') return;
+
+      draggedItem = item;
+      draggedId = item.dataset.id;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedId);
+    });
+
+    grid.addEventListener('dragend', (e) => {
+      if (draggedItem) {
+        draggedItem.classList.remove('dragging');
+        draggedItem = null;
+        draggedId = null;
+      }
+      document.querySelectorAll('.grid-item.drag-over').forEach(el => {
+        el.classList.remove('drag-over');
+      });
+    });
+
+    grid.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (currentView !== 'album') return;
+
+      const item = e.target.closest('.grid-item');
+      if (item && item !== draggedItem) {
+        document.querySelectorAll('.grid-item.drag-over').forEach(el => {
+          el.classList.remove('drag-over');
+        });
+        item.classList.add('drag-over');
+      }
+    });
+
+    grid.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      if (currentView !== 'album' || !currentAlbumId) return;
+
+      const dropTarget = e.target.closest('.grid-item');
+      if (!dropTarget || dropTarget === draggedItem) return;
+
+      const fromId = draggedId;
+      const toId = dropTarget.dataset.id;
+
+      if (!fromId || !toId) return;
+
+      // Reorder pictures
+      const currentOrder = pictures.map(p => p.id);
+      const fromIdx = currentOrder.indexOf(fromId);
+      const toIdx = currentOrder.indexOf(toId);
+
+      if (fromIdx === -1 || toIdx === -1) return;
+
+      // Remove from old position and insert at new position
+      currentOrder.splice(fromIdx, 1);
+      currentOrder.splice(toIdx, 0, fromId);
+
+      await saveAlbumOrder(currentAlbumId, currentOrder);
+      dropTarget.classList.remove('drag-over');
+      renderGrid();
     });
 
     // Select mode
@@ -2613,6 +3103,18 @@
 
     addToAlbumModal.addEventListener('click', (e) => {
       if (e.target === addToAlbumModal) addToAlbumModal.classList.remove('active');
+    });
+
+    // About modal
+    const aboutModal = document.getElementById('aboutModal');
+    document.getElementById('aboutBtn').addEventListener('click', () => {
+      aboutModal.classList.add('active');
+    });
+    document.getElementById('closeAboutBtn').addEventListener('click', () => {
+      aboutModal.classList.remove('active');
+    });
+    aboutModal.addEventListener('click', (e) => {
+      if (e.target === aboutModal) aboutModal.classList.remove('active');
     });
 
     // Clear storage button
